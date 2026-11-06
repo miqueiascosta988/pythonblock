@@ -1,0 +1,55 @@
+name: Bloqueios Guesty - leitura diária
+
+on:
+  schedule:
+    - cron: '0 10 * * *'   # 07:00 em Brasília (UTC-3, sem horário de verão). O GitHub pode atrasar alguns minutos.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Só simular (não grava na planilha nem envia PUT)'
+        type: boolean
+        default: true
+      unidades:
+        description: 'Opcional: limitar a estas unidades (apelidos separados por vírgula)'
+        type: string
+        default: ''
+
+concurrency:
+  group: bloqueios-guesty   # leitura e envio ao Slack nunca rodam ao mesmo tempo
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      # A Guesty limita a emissão de tokens por dia: reaproveita o token (válido por 24 h) entre execuções.
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: guesty-token-${{ github.run_id }}
+          restore-keys: guesty-token-
+      - name: Atualizar planilha
+        env:
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GUESTY_CLIENT_ID: ${{ secrets.GUESTY_CLIENT_ID }}
+          GUESTY_CLIENT_SECRET: ${{ secrets.GUESTY_CLIENT_SECRET }}
+          GUESTY_CONTA: ${{ vars.GUESTY_CONTA || '360 Suítes' }}
+          ALLOW_PUT: ${{ vars.ALLOW_PUT || 'false' }}   # trava extra: só 'true' permite PUT na Guesty
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+          UNIDADES: ${{ github.event_name == 'workflow_dispatch' && inputs.unidades || '' }}
+        run: |
+          args=()
+          [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
+          [ -n "$UNIDADES" ] && args+=(--unidades "$UNIDADES")
+          python -m bloqueios.run "${args[@]}"

@@ -1,0 +1,46 @@
+name: Bloqueios Guesty - notificações no Slack
+
+on:
+  schedule:
+    - cron: '0 12 * * *'   # 09:00 em Brasília. O script decide: segunda/sexta = todas; outros dias = nada (ou só CRÍTICA se ligado).
+  workflow_dispatch:
+    inputs:
+      escopo:
+        type: choice
+        options: [auto, todas, critica]
+        default: auto
+      dry_run:
+        description: 'Só listar o que seria enviado'
+        type: boolean
+        default: true
+
+concurrency:
+  group: bloqueios-guesty
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  notificar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Enviar notificações
+        env:
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CRITICA_DIARIA: ${{ vars.SLACK_CRITICA_DIARIA || 'false' }}
+          ESCOPO: ${{ github.event_name == 'workflow_dispatch' && inputs.escopo || 'auto' }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: |
+          args=(--escopo "$ESCOPO")
+          [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
+          python -m bloqueios.slack "${args[@]}"
